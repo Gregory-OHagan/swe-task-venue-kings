@@ -24,19 +24,19 @@ async def main():
     failed_calls = sum([x[2] for x in res_list])
     success_rate = successful_calls / (successful_calls + failed_calls)
 
-    # Amalgamate the
+    # Combine the results
     data = []
+    errors = []
     for res in res_list:
         data.extend(res[0])
-
-    # TODO: do something with reported errors
+        errors.extend(res[3])
 
     # Calculate the processing time
     dt_end = datetime.datetime.now()
     duration = (dt_end - dt_start).total_seconds()
 
     # Write the results to an output file
-    write_output(data, duration, success_rate, ["a", "c", "d"])
+    write_output(data, duration, success_rate, ["a", "c", "d"], errors)
 
 
 # Fetches data from https://jsonplaceholder.typicode.com/posts, formatted as 20 item pages.
@@ -114,7 +114,7 @@ async def get_data(config, request_func, source_string, source_prefix):
     data = []
     success_count = 0
     fail_count = 0
-    is_failure = False
+    errors = []
 
     async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=config["timeout_seconds"])) as session:
         is_more_data = True
@@ -131,7 +131,8 @@ async def get_data(config, request_func, source_string, source_prefix):
                 fail_count += 1
                 # End early if we fail too many times in a row
                 if retry_count >= config["num_retries"]:
-                    is_failure = True
+                    timestamp = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+                    errors.append({"endpoint": source_string, "error": "timeout_after_retries", "timestamp": timestamp})
                     break
                 # Otherwise, retry with an exponential backoff
                 else:
@@ -155,7 +156,7 @@ async def get_data(config, request_func, source_string, source_prefix):
             else:
                 is_more_data = False
 
-    return data, success_count, fail_count, is_failure
+    return data, success_count, fail_count, errors
 
 
 # Converts the json response into a list of objects
@@ -184,7 +185,7 @@ def process_one_set(data, source, id_prefix):
 # - processing_time: float. The processing time in seconds
 # - success_rate: float. The success rate of the network calls
 # - sources: list of strings. A list of sources used in the output.
-def write_output(data, processing_time, success_rate, sources):
+def write_output(data, processing_time, success_rate, sources, errors):
     output = {
         "summary": {
             "total_products": len(data),
@@ -192,7 +193,8 @@ def write_output(data, processing_time, success_rate, sources):
             "success_rate": success_rate,
             "sources": sources
         },
-        "products": data
+        "products": data,
+        "errors": errors
     }
 
     with open("results.json", "w") as outfile:
