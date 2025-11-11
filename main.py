@@ -14,7 +14,6 @@ async def main():
 	# Load configuration file
 	with open("config.json") as infile:
 		config = json.load(infile)
-	# TODO: consider adding defaults to loaded config in case of a malformed config file
 
 	pool = MyThreadingPool(config["worker_thread_count"])
 
@@ -117,7 +116,9 @@ async def request_source_d(session, page):
 # - source_string: string. The text name of the data source
 # - source_prefix: string. The prefix used to create the unified_id field.
 #   - must be unique to guarantee unified_id field is unique.
-# Return: A list of processed objects (dictionaries), each corresponding to one product
+# - pool: MyThreadingPool object. Used to run the processing work on each returned web request.
+# Return: MyMulthreadingData object, containing the results. Make sure the threading pool has completed all work
+# before using this.
 async def get_data(config, request_func, source_string, source_prefix, pool):
 	results = MyMultithreadingData()
 
@@ -172,6 +173,7 @@ async def get_data(config, request_func, source_string, source_prefix, pool):
 
 
 # Converts the json response into a list of objects
+# Most fields are replaced by None or blank fields if empty, but objects without an id are skipped.
 # Parameters:
 # - data: a list of objects (dictionaries), each one corresponding to one item
 # - source: string. The data source name
@@ -197,12 +199,13 @@ def process_one_set(data, source, id_prefix, results):
 	results.add_products(new_objects)
 
 
-# Creates the output file based on the processed items
+# Creates the output json file based on the processed items
 # Parameters:
 # - data: a list of objects (dictionaries), each one corresponding to one item
 # - processing_time: float. The processing time in seconds
 # - success_rate: float. The success rate of the network calls
 # - sources: list of strings. A list of sources used in the output.
+# - sources: list of strings. A list of errors to log in the output
 def write_output(data, processing_time, success_rate, sources, errors):
 	output = {
 		"summary": {
