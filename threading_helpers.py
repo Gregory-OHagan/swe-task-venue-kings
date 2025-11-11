@@ -20,7 +20,7 @@ class MyMultithreadingData:
 
 	def add_error(self, error):
 		with self.lock:
-			self.products.append(error)
+			self.errors.append(error)
 
 	def add_successful_request(self, num=1):
 		with self.lock:
