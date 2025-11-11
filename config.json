@@ -1,7 +1,7 @@
 {
-  "first_retry_delay_milliseconds": 200,
+  "first_retry_delay_seconds": 0.2,
   "retry_backoff_multiplier": 2,
   "num_retries": 3,
-  "endpoint_delay_between_requests_milliseconds": 200,
+  "endpoint_delay_between_requests_seconds": 0.2,
   "worker_thread_count": 4
 }
