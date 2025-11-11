@@ -21,8 +21,26 @@ async def mock_get_data(session, page):
 			{"id": 3, "title": "blue hoodie", "category": "clothes", "price": 30},
 			{"id": 4, "title": "calculator", "category": "electronics", "price": 60}
 		]}
-	else:
-		return 200, {"products": []}
+	return 200, {"products": []}
+
+
+# returns multiple pages of valid data
+async def mock_get_data_2(session, page):
+	if page == 1:
+		return 200, {"products": [
+			{"id": 1, "title": "brown dinosaur", "category": "toy", "price": 15},
+			{"id": 2, "title": "grey rocket", "category": "toy", "price": 23}
+		]}
+	if page == 2:
+		return 200, {"products": [
+			{"id": 3, "title": "blue hoodie", "category": "toy", "price": 30},
+			{"id": 4, "title": "tablet", "category": "electronics", "price": 110}
+		]}
+	if page == 3:
+		return 200, {"products": [
+			{"id": 5, "title": "red car", "category": "toy", "price": 17}
+		]}
+	return 200, {"products": []}
 
 
 test_config = {
@@ -67,3 +85,34 @@ async def _test_retry_backoff():
 	assert res.failed_requests == 4
 	assert 1.3 < time.time() - start < 1.5		# actual expected value: 1.4
 	assert res.errors[0]['error'] == "timeout_after_retries"
+
+
+# Integration test that expected behaviour holds when running multiple sources in parallel
+def test_get_data_complex():
+	asyncio.run(_test_get_data_complex())
+
+
+async def _test_get_data_complex():
+	pool = MyThreadingPool(4)
+
+	start = time.time()
+	(res1, res2, res3, res4) = await asyncio.gather(get_data(test_config, mock_get_data_empty, "A", "a.", pool),
+													get_data(test_config, mock_get_data_error, "B", "b.", pool),
+													get_data(test_config, mock_get_data, "C", "c.", pool),
+													get_data(test_config, mock_get_data_2, "D", "d.", pool))
+
+	pool.join_all()
+
+	assert res1.failed_requests == 0
+	assert res1.successful_requests == 1
+	assert len(res1.products) == 0
+
+	assert res2.failed_requests == 4
+	assert res2.successful_requests == 0
+	assert len(res2.products) == 0
+
+	assert res3.successful_requests == 2
+	assert len(res3.products) == 4
+
+	assert res4.successful_requests == 4
+	assert len(res4.products) == 5
