@@ -16,6 +16,7 @@ up the tests (every function starting with "test") which I believe is also stand
 
 * Python 3.X (tested using python 3.11)
 * aiohttp ("pip install aiohttp[speedups]")
+* Internet connection (the endpoints used are the provided free testing APIs)
 
 
 ## Assumptions:

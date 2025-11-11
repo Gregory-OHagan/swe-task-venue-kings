@@ -7,9 +7,29 @@ async def mock_get_data_empty(session, page):
 	return 200, {"products": []}
 
 
+async def mock_get_data_unexpected_error(session, page):
+	if page == 1:
+		return 200, {"products": [
+			{"id": 1, "title": "brown dinosaur", "category": "toy", "price": 15},
+			{"id": 2, "title": "grey rocket", "category": "toy", "price": 23}
+		]}
+	raise ValueError()
+
+
+async def mock_get_data_bad_format(session, page):
+	if page == 1:
+		return 200, {"products": [
+				{"title": "brown shirt", "category": "clothes"},
+				{"id": 2, "title": "grey pants", "price": 25, "asdf": 57},
+				{"id": 3, "category": "clothes", "price": 30},
+				{"id": 4, "title": "calculator", "category": "electronics", "price": 60}
+			]}
+	return 404, []
+
+
 # Returns an error response
 async def mock_get_data_error(session, page):
-	return 404, None
+	raise asyncio.TimeoutError()
 
 
 # returns valid data
@@ -87,6 +107,39 @@ async def _test_retry_backoff():
 	assert res.errors[0]['error'] == "timeout_after_retries"
 
 
+# Makes sure that one pipeline going down doesn't affect others
+def test_unexpected_error():
+	asyncio.run(_test_unexpected_error())
+
+
+async def _test_unexpected_error():
+	pool = MyThreadingPool(4)
+
+	(res, res2) = await asyncio.gather(get_data(test_config, mock_get_data_unexpected_error, "source", "a.", pool),
+									   get_data(test_config, mock_get_data, "source2", "b.", pool))
+
+	pool.join_all()
+	assert res.errors[0]['error'] == "pipeline_hard_crash"
+	assert len(res2.products) == 4
+
+
+# Tests that data that is missing certain fields doesn't bring down the whole processing stream
+def test_malformed_data():
+	asyncio.run(_test_malformed_data())
+
+
+async def _test_malformed_data():
+	pool = MyThreadingPool(4)
+
+	(res,) = await asyncio.gather(get_data(test_config, mock_get_data_bad_format, "source", "a.", pool))
+
+	pool.join_all()
+
+	assert res.failed_requests == 4
+	assert len(res.products) == 3
+	assert len(res.errors) == 1
+
+
 # Integration test that expected behaviour holds when running multiple sources in parallel
 def test_get_data_complex():
 	asyncio.run(_test_get_data_complex())
@@ -95,7 +148,6 @@ def test_get_data_complex():
 async def _test_get_data_complex():
 	pool = MyThreadingPool(4)
 
-	start = time.time()
 	(res1, res2, res3, res4) = await asyncio.gather(get_data(test_config, mock_get_data_empty, "A", "a.", pool),
 													get_data(test_config, mock_get_data_error, "B", "b.", pool),
 													get_data(test_config, mock_get_data, "C", "c.", pool),

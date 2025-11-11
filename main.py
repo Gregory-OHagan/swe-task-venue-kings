@@ -43,7 +43,9 @@ async def main():
 	duration = end - start
 
 	# Write the results to an output file
-	write_output(data, duration, success_rate, ["a", "c", "d"], errors)
+	write_output(data, duration, success_rate, ["jsonplaceholder", "escuelajs", "dummyjson"], errors)
+
+	print("Done. {} items processed over {:.2f} seconds.".format(len(data), duration))
 
 
 # Fetches data from https://jsonplaceholder.typicode.com/posts, formatted as 20 item pages.
@@ -150,7 +152,7 @@ async def get_data(config, request_func, source_string, source_prefix, pool):
 						continue
 
 				results.add_successful_request()
-				retry_count = 1
+				retry_count = 0
 
 				if len(response_json['products']) > 0:
 					pool.apply(process_one_set, (response_json['products'], source_string, source_prefix, results))
