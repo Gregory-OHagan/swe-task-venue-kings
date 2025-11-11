@@ -47,22 +47,3 @@ endpoints through a config file.
 * The included tests are functional and useful, but not comprehensive. I would increase the code
 coverage of the tests.
 
-
-## Notes on Threading implementation
-
-The threading implementation is entirely unnecessary given the asyncio implementation in the project.
-The reason for this is because:
-
-(a) if the processing time is (potentially) less than the web request rate, it is superfluous
-as the requests from different sources are already asynchronously handled.
-
-(b) if the processing time is (potentially) greater than the web request rate, the safeguards
-against memory overuse will kick in and slow down the web request rate, resulting in no
-performance gains
-
-If I was designing this for production, given my current understanding of the requirements,
-I would use the asyncio but not the threading library.
-
-Hypothetically, if this project was given a version of Python without the global interpreter
-lock (GIL) and was cpu bound in terms of processing the inputs, this threading implementation
-would then give performance gains.
