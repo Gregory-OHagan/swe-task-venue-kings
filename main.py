@@ -48,7 +48,7 @@ async def get_data_source_d(config):
                     fail_count += 1
                     # End early if we fail too many times in a row
                     if retry_count >= config["num_retries"]:
-                        failure = True
+                        is_failure = True
                         break
                     # Otherwise, retry with an exponential backoff
                     else:
