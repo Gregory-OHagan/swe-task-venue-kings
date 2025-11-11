@@ -29,12 +29,34 @@ be created in a way to match items across sources.
 The request functions are mocked to provide this behaviour as the sample sources do not provide this,
 but the rest of the implementation would handle larger pages without issue (up to memory limits).
 * Object fields that are not present in the provided/mock data should be set to None/null.
+* The output data file format is made to match the format of the sample, but the json
+includes some assumptions to do so while including the requested information.
 
 
-## Areas for future improvements
+## Areas for Future Improvements
 
 If I was planning to maintain and reuse this project in the future (as opposed to using it as a one-off script),
 here are some areas I'd change to support this.
 
 * The endpoints are currently hard-coded. I would update this to allow selecting a sublist of implemented
 endpoints through a config file.
+
+
+## Notes on Threading implementation
+
+The threading implementation is entirely unnecessary given the asyncio implementation in the project.
+The reason for this is because:
+
+(a) if the processing time is (potentially) less than the web request rate, it is superfluous
+as the requests from different sources are already asynchronously handled.
+
+(b) if the processing time is (potentially) greater than the web request rate, the safeguards
+against memory overuse will kick in and slow down the web request rate, resulting in no
+performance gains
+
+If I was designing this for production, given my current understanding of the requirements,
+I would use the asyncio but not the threading library.
+
+Hypothetically, if this project was given a version of Python without the global interpreter
+lock (GIL) and was cpu bound in terms of processing the inputs, this threading implementation
+would then give performance gains.

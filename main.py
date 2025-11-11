@@ -3,37 +3,45 @@ import aiohttp
 
 import datetime
 import json
+import time
+
+from threading_helpers import *
 
 
 async def main():
-    dt_start = datetime.datetime.now()
+    start = time.time()
 
     # Load configuration file
-    with open('config.json') as infile:
+    with open("config.json") as infile:
         config = json.load(infile)
     # TODO: consider adding defaults to loaded config in case of a malformed config file
 
+    pool = MyThreadingPool(config["worker_thread_count"])
+
     # Process each endpoint asynchronously
-    res_a, res_c, res_d = await asyncio.gather(get_data(config, request_source_a, "jsonplaceholder", "a."),
-                                               get_data(config, request_source_c, "escuelajs", "c."),
-                                               get_data(config, request_source_d, "dummyjson", "d."))
+    res_a, res_c, res_d = await asyncio.gather(get_data(config, request_source_a, "jsonplaceholder", "a.", pool),
+                                               get_data(config, request_source_c, "escuelajs", "c.", pool),
+                                               get_data(config, request_source_d, "dummyjson", "d.", pool))
     res_list = [res_a, res_c, res_d]
 
+    # Wait until all processing threads are complete
+    pool.join_all()
+
     # Calculate combined statistics
-    successful_calls = sum([x[1] for x in res_list])
-    failed_calls = sum([x[2] for x in res_list])
+    successful_calls = sum([x.successful_requests for x in res_list])
+    failed_calls = sum([x.failed_requests for x in res_list])
     success_rate = successful_calls / (successful_calls + failed_calls)
 
     # Combine the results
     data = []
     errors = []
     for res in res_list:
-        data.extend(res[0])
-        errors.extend(res[3])
+        data.extend(res.products)
+        errors.extend(res.errors)
 
     # Calculate the processing time
-    dt_end = datetime.datetime.now()
-    duration = (dt_end - dt_start).total_seconds()
+    end = time.time()
+    duration = end - start
 
     # Write the results to an output file
     write_output(data, duration, success_rate, ["a", "c", "d"], errors)
@@ -110,62 +118,68 @@ async def request_source_d(session, page):
 # - source_prefix: string. The prefix used to create the unified_id field.
 #   - must be unique to guarantee unified_id field is unique.
 # Return: A list of processed objects (dictionaries), each corresponding to one product
-async def get_data(config, request_func, source_string, source_prefix):
-    data = []
-    success_count = 0
-    fail_count = 0
-    errors = []
+async def get_data(config, request_func, source_string, source_prefix, pool):
+    results = MyMultithreadingData()
 
-    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=config["timeout_seconds"])) as session:
-        is_more_data = True
-        page = 1
-        retry_count = 0
-        while is_more_data:
-            try:
-                status, response_json = await request_func(session, page)
-            except asyncio.TimeoutError:
-                status = "timeout"
+    try:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=config["timeout_seconds"])) as session:
+            is_more_data = True
+            page = 1
+            retry_count = 0
+            while is_more_data:
+                try:
+                    status, response_json = await request_func(session, page)
+                except asyncio.TimeoutError:
+                    status = "timeout"
 
-            # Retry on request failure
-            if status != 200:
-                fail_count += 1
-                # End early if we fail too many times in a row
-                if retry_count >= config["num_retries"]:
-                    timestamp = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
-                    errors.append({"endpoint": source_string, "error": "timeout_after_retries", "timestamp": timestamp})
-                    break
-                # Otherwise, retry with an exponential backoff
+                # Retry on request failure
+                if status != 200:
+                    results.add_failed_request()
+                    # End early if we fail too many times in a row
+                    if retry_count >= config["num_retries"]:
+                        timestamp = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+                        results.add_error({"endpoint": source_string, "error": "timeout_after_retries", "timestamp": timestamp})
+                        break
+                    # Otherwise, retry with an exponential backoff
+                    else:
+                        delay = config["first_retry_delay_seconds"] \
+                                * pow(config["retry_backoff_multiplier"], retry_count)
+                        retry_count += 1
+                        await asyncio.sleep(delay)
+                        continue
+
+                results.add_successful_request()
+                retry_count = 1
+
+                if len(response_json['products']) > 0:
+                    pool.apply(process_one_set, (response_json['products'], source_string, source_prefix, results))
+
+                    page += 1
+
+                    await asyncio.sleep(config["endpoint_delay_between_requests_seconds"])
+
                 else:
-                    delay = config["first_retry_delay_seconds"] \
-                            * pow(config["retry_backoff_multiplier"], retry_count)
-                    retry_count += 1
-                    await asyncio.sleep(delay)
-                    continue
+                    is_more_data = False
 
-            success_count += 1
-            retry_count = 1
+    # Note: generally, any possible errors should be handled before this hard catch statement,
+    # but including it provides protection against any one pipeline taking down the whole script.
+    # Disable this statement when trying to debug pipeline crashes.
+    except:
+        timestamp = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        results.add_error({"endpoint": source_string, "error": "pipeline_hard_crash", "timestamp": timestamp})
 
-            if len(response_json['products']) > 0:
-                res = process_one_set(response_json['products'], source_string, source_prefix)
-                data.extend(res)
-
-                page += 1
-
-                await asyncio.sleep(config['endpoint_delay_between_requests_seconds'])
-
-            else:
-                is_more_data = False
-
-    return data, success_count, fail_count, errors
+    return results
 
 
 # Converts the json response into a list of objects
 # Parameters:
 # - data: a list of objects (dictionaries), each one corresponding to one item
-# - source: string, specifying the data source
+# - source: string. The data source name
+# - id_prefix: string. The prefix used to generate unified unique id values
+# - results: MyMultithreadingData. Used to store/return the outputs in a threadsafe manner.
 # Return: a list of objects (dictionaries), each one corresponding to one processed item
-def process_one_set(data, source, id_prefix):
-    result = []
+def process_one_set(data, source, id_prefix, results):
+    new_objects = []
     for product in data:
         product_obj = {
             'id': id_prefix + str(product['id']),
@@ -175,8 +189,8 @@ def process_one_set(data, source, id_prefix):
             'category': product['category'] if 'category' in product else None,
             'processed_at': datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
         }
-        result.append(product_obj)
-    return result
+        new_objects.append(product_obj)
+    results.add_products(new_objects)
 
 
 # Creates the output file based on the processed items
